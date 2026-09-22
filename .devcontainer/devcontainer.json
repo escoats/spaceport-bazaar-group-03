@@ -1,0 +1,7 @@
+{
+  "name": "Bazaar",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "forwardPorts": [3001]
+}

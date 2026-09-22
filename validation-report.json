@@ -1,0 +1,12 @@
+{
+  "profile": "message-samples-1",
+  "run_id": "sample-14ada01f481a6546",
+  "station_id": "P01",
+  "status": "in progress",
+  "last_completed_step": 0,
+  "inbound": [],
+  "outbound_written": [],
+  "mismatch": null,
+  "final_inventory": null,
+  "interpretation": "Records successful server writes and validated inbound samples. It does not prove client decoding, display, or full C01–C20/S01–S24 conformance."
+}
