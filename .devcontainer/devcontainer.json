@@ -3,5 +3,12 @@
   "build": {
     "dockerfile": "Dockerfile"
   },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "openai.chatgpt"
+      ]
+    }
+  },
   "forwardPorts": [3001]
 }
