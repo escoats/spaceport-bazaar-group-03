@@ -1,3 +1,4 @@
 validation-credentials.json
 validation-report.json
 */node_modules
+.env

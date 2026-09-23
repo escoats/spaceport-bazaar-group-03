@@ -7,6 +7,7 @@
     "start": "node client.js"
   },
   "dependencies": {
+    "dotenv": "^18.0.3",
     "protobufjs": "^8.8.0",
     "ws": "^8.18.0"
   }

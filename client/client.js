@@ -1,5 +1,6 @@
 const fs = require('node:fs');
 const path = require('node:path');
+require('dotenv').config({ path: path.resolve(__dirname, '../.env'), quiet: true });
 const { parseArgs } = require('node:util');
 const WebSocket = require('ws');
 const { decodeServerMessage } = require('./encoding');
@@ -26,6 +27,8 @@ try {
   console.error('Usage: npm start -- --strategy <name>');
   process.exit(1);
 }
+
+
 
 // A full URL takes precedence and preserves an explicitly supplied wss:// scheme.
 const endpoint = process.env.BAZAAR_WS_URL
