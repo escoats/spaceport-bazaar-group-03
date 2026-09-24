@@ -26,13 +26,13 @@ function setup() {
   return { strategy, state, sent, start };
 }
 
-test('waits for readiness and prefers specialty payment for the lowest resource', () => {
+test('waits for readiness and pays from the largest safe surplus', () => {
   const { strategy, state, sent } = setup();
   strategy.onState(state);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].ready.snapshotSequence, 1);
   strategy.onReadiness({ runId: 'run', ready: true, snapshotSequence: 1 });
-  assert.deepEqual(sent[1].offer.body.give, bundle(5, 0, 0));
+  assert.deepEqual(sent[1].offer.body.give, bundle(0, 0, 5));
   assert.deepEqual(sent[1].offer.body.receive, bundle(0, 5, 0));
   strategy.onState(state);
   assert.equal(sent.length, 2);
@@ -97,7 +97,7 @@ test('offers to a newly encountered seller even without a matching seeking resou
     state.snapshotSequence += 1;
     strategy.onState(state);
     assert.equal(sent[1].offer.body.recipientId, 'P03');
-    assert.deepEqual(sent[1].offer.body.give, bundle(5, 0, 0));
+    assert.deepEqual(sent[1].offer.body.give, bundle(0, 0, 5));
     assert.deepEqual(sent[1].offer.body.receive, bundle(0, 5, 0));
   }
 });
@@ -126,7 +126,7 @@ test('chooses the lowest unit price over arrival order and specialty payment', (
   assert.equal(sent[1].accept.body.offerId, 'cheap-unit-price');
 });
 
-test('prioritizes the scarcest resource over a cheaper less-needed resource', () => {
+test('prioritizes the largest total deficit reduction', () => {
   const { state, sent, start } = setup();
   state.self.inventory = bundle(30, 2, 10);
   state.offers.items = [
@@ -134,10 +134,10 @@ test('prioritizes the scarcest resource over a cheaper less-needed resource', ()
     incomingOffer('food', bundle(0, 3, 0), bundle(3, 0, 0)),
   ];
   start();
-  assert.equal(sent[1].accept.body.offerId, 'food');
+  assert.equal(sent[1].accept.body.offerId, 'components');
 });
 
-test('breaks equal unit prices by total cost, then specialty payment', () => {
+test('prefers the offer with the larger deficit reduction', () => {
   for (const smallPayment of [bundle(0, 0, 2), bundle(2, 0, 0)]) {
     const { state, sent, start } = setup();
     state.offers.items = [
@@ -148,8 +148,24 @@ test('breaks equal unit prices by total cost, then specialty payment', () => {
       state.offers.items.unshift(incomingOffer('other-small', bundle(0, 2, 0), bundle(0, 0, 2)));
     }
     start();
-    assert.equal(sent[1].accept.body.offerId, 'small');
+    assert.equal(sent[1].accept.body.offerId, 'large');
   }
+});
+
+test('allows a produced resource below reserve when the net deficit improves', () => {
+  const { state, sent, start } = setup();
+  state.self.inventory = bundle(10, 2, 30);
+  state.offers.items = [incomingOffer('produced-payment', bundle(10, 0, 0), bundle(5, 0, 0))];
+  start();
+  assert.equal(sent[1].accept.body.offerId, 'produced-payment');
+});
+
+test('uses the produced resource when safe surpluses are tied', () => {
+  const { state, sent, start } = setup();
+  state.self.inventory = bundle(30, 20, 30);
+  state.advertisements.items[0].selling.items = [2];
+  start();
+  assert.deepEqual(sent[1].offer.body.give, bundle(5, 0, 0));
 });
 
 test('accepts a balancing offer when no offer supplies the absolute scarcest resource', () => {

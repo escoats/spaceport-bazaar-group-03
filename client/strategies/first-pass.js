@@ -2,14 +2,16 @@ const { randomUUID } = require('node:crypto');
 
 const RESOURCES = [1, 2, 3];
 const FIELD = { 1: 'water', 2: 'food', 3: 'components' };
+const DEFAULT_RESERVE_TICKS = 15;
+const SIMILAR_SURPLUS_DELTA = 1;
 const emptyBundle = () => ({ water: 0, food: 0, components: 0 });
 const total = bundle => RESOURCES.reduce((sum, id) => sum + bundle[FIELD[id]], 0);
-const spread = bundle => {
-  const values = RESOURCES.map(id => bundle[FIELD[id]]);
-  return Math.max(...values) - Math.min(...values);
-};
+const deficit = (bundle, reserve) => RESOURCES.reduce((sum, id) => {
+  const field = FIELD[id];
+  return sum + Math.max(0, reserve[field] - bundle[field]);
+}, 0);
 
-function createFirstPassStrategy({ sendClientMessage }) {
+function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESERVE_TICKS }) {
   let state;
   let ready = false;
   let readinessSequence;
@@ -44,33 +46,48 @@ function createFirstPassStrategy({ sendClientMessage }) {
     // paid trade so multiple acceptances cannot spend the same surplus.
     if (open.some(offer => offer.proposerId === self.stationId)) return;
     const inventory = self.inventory;
-    const reserve = self.upkeepPerTick;
+    const reserve = RESOURCES.reduce((bundle, id) => {
+      const field = FIELD[id];
+      bundle[field] = self.upkeepPerTick[field] * reserveTicks;
+      return bundle;
+    }, emptyBundle());
+    const currentDeficit = deficit(inventory, reserve);
 
     const beneficial = incoming.filter(offer => {
       if (attempted.has(offer.offerId)) return false;
       const after = emptyBundle();
+      let paymentBelowReserve = false;
       for (const id of RESOURCES) {
         const field = FIELD[id];
-        // Payment must be affordable before receiving the other side.
         if (offer.receive[field] > inventory[field]) return false;
         after[field] = inventory[field] - offer.receive[field] + offer.give[field];
-        if (offer.receive[field] > 0 && after[field] < reserve[field]) return false;
+        if (offer.receive[field] > 0 && after[field] < reserve[field]) paymentBelowReserve = true;
       }
-      return RESOURCES.some(id => after[FIELD[id]] > inventory[FIELD[id]])
-        && total(after) >= total(inventory) && spread(after) < spread(inventory);
+      const improvesDeficit = deficit(after, reserve) < currentDeficit;
+      const paidProducedResource = RESOURCES.some(id => {
+        const field = FIELD[id];
+        return offer.receive[field] > 0 && field === FIELD[self.specialty]
+          && after[field] < reserve[field];
+      });
+      const remainsSafe = !paymentBelowReserve;
+      return improvesDeficit && (remainsSafe || paidProducedResource);
     });
-    // Give/receive are from the proposer's perspective: receive is our cost.
-    // Prefer the scarcest resource we actually gain, then the lowest cost per
-    // unit received. Total cost and specialty payment break remaining ties.
-    const scarcity = offer => Math.min(...RESOURCES
-      .filter(id => offer.give[FIELD[id]] > offer.receive[FIELD[id]])
-      .map(id => inventory[FIELD[id]]));
-    const price = offer => total(offer.receive) / total(offer.give);
-    beneficial.sort((a, b) => scarcity(a) - scarcity(b)
-      || price(a) - price(b)
-      || total(a.receive) - total(b.receive)
-      || Number(b.receive[FIELD[self.specialty]] > 0)
-        - Number(a.receive[FIELD[self.specialty]] > 0));
+    beneficial.sort((a, b) => {
+      const aAfter = RESOURCES.reduce((bundle, id) => {
+        const field = FIELD[id];
+        bundle[field] = inventory[field] - a.receive[field] + a.give[field];
+        return bundle;
+      }, emptyBundle());
+      const bAfter = RESOURCES.reduce((bundle, id) => {
+        const field = FIELD[id];
+        bundle[field] = inventory[field] - b.receive[field] + b.give[field];
+        return bundle;
+      }, emptyBundle());
+      return deficit(aAfter, reserve) - deficit(bAfter, reserve)
+        || total(a.receive) - total(b.receive)
+        || Number(b.receive[FIELD[self.specialty]] > 0)
+          - Number(a.receive[FIELD[self.specialty]] > 0);
+    });
     if (beneficial.length) {
       const offer = beneficial[0];
       return command('accept', { offerId: offer.offerId }, offer.offerId);
@@ -88,18 +105,21 @@ function createFirstPassStrategy({ sendClientMessage }) {
           if (!RESOURCES.includes(give) || give === receive) continue;
           const key = `${ad.advertisementId}:${give}:${receive}`;
           if (attempted.has(key)) continue;
-          const surplus = inventory[FIELD[give]] - inventory[FIELD[receive]];
+          const surplus = inventory[FIELD[give]] - reserve[FIELD[give]];
           const quantity = Math.min(5, Math.floor(surplus / 2),
             inventory[FIELD[give]] - reserve[FIELD[give]]);
           if (quantity <= 0) continue;
-          candidates.push({ ad, give, receive, quantity, key });
+          candidates.push({ ad, give, receive, quantity, key, surplus });
         }
       }
     }
-    candidates.sort((a, b) => inventory[FIELD[a.receive]] - inventory[FIELD[b.receive]]
-      || Number(b.give === self.specialty) - Number(a.give === self.specialty)
-      || Number(b.ad.seeking.items.includes(b.give)) - Number(a.ad.seeking.items.includes(a.give))
-      || inventory[FIELD[b.give]] - inventory[FIELD[a.give]]);
+    candidates.sort((a, b) => {
+      const surplusDifference = b.surplus - a.surplus;
+      if (Math.abs(surplusDifference) > SIMILAR_SURPLUS_DELTA) return surplusDifference;
+      return Number(b.give === self.specialty) - Number(a.give === self.specialty)
+        || Number(b.ad.seeking.items.includes(b.give)) - Number(a.ad.seeking.items.includes(a.give))
+        || inventory[FIELD[a.receive]] - inventory[FIELD[b.receive]];
+    });
     const best = candidates[0];
     if (!best || state.rules.maxOpenOutgoingOffers < 1 || state.rules.maxOfferTtlTicks < 1) return;
     const give = emptyBundle();
