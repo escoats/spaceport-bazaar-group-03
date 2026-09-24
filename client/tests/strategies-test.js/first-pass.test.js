@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createFirstPassStrategy } = require('./first-pass');
-const { encodeClientMessage } = require('../encoding');
+const { createFirstPassStrategy } = require('../../strategies/first-pass');
+const { encodeClientMessage } = require('../../encoding');
 
 const bundle = (water, food, components) => ({ water, food, components });
 function setup() {
@@ -161,7 +161,7 @@ test('accepts a balancing offer when no offer supplies the absolute scarcest res
 });
 
 test('connection handshake sends ready before the game starts and gates trading on acknowledgement', () => {
-  const { createIncomingMessageHandler } = require('../services/incoming-message-handlers');
+  const { createIncomingMessageHandler } = require('../../services/incoming-message-handlers');
   // Each new connection constructs a new strategy, including reconnects.
   for (let connection = 0; connection < 2; connection += 1) {
     const { strategy, state, sent } = setup();
