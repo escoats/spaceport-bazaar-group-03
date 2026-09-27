@@ -1,29 +1,14 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createFirstPassStrategy } = require('../../strategies/first-pass');
-const { encodeClientMessage } = require('../../encoding');
+const { bundle, createStrategyHarness } = require('../helpers/strategy-harness');
 
-const bundle = (water, food, components) => ({ water, food, components });
 function setup() {
-  const sent = [];
-  const strategy = createFirstPassStrategy({ sendClientMessage(message) {
-    encodeClientMessage(message);
-    sent.push(message);
-  } });
-  const state = {
-    runId: 'run', snapshotSequence: 1, tick: 0, phase: 2,
-    self: { stationId: 'P01', specialty: 1, inventory: bundle(20, 2, 30), upkeepPerTick: bundle(1, 1, 1) },
-    rules: { newCommandsPerStationPerTick: 10, maxOpenOutgoingOffers: 5, maxOfferTtlTicks: 6 },
-    offers: { items: [] },
+  return createStrategyHarness('first-pass', {
+    self: { inventory: bundle(20, 2, 30) },
     advertisements: { items: [
       { advertisementId: 'ad1', stationId: 'P02', status: 1, expiresTick: 6, selling: { items: [2] }, seeking: { items: [3, 1] } },
     ] },
-  };
-  const start = () => {
-    strategy.onState(state);
-    strategy.onReadiness({ runId: 'run', ready: true, snapshotSequence: 1 });
-  };
-  return { strategy, state, sent, start };
+  });
 }
 
 test('waits for readiness and prefers specialty payment for the lowest resource', () => {
