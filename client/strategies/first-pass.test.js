@@ -44,11 +44,11 @@ test('waits for readiness and pays from the largest safe surplus', () => {
   assert.equal(sent.length, 1);
   assert.equal(sent[0].ready.snapshotSequence, 1);
   strategy.onReadiness({ runId: 'run', ready: true, snapshotSequence: 1 });
-  assert.deepEqual(sent[1].advertise.body.selling.items, [1, 3]);
+  assert.deepEqual(sent[1].advertise.body.selling.items, [3]);
   assert.deepEqual(sent[1].advertise.body.seeking.items, [2]);
   settleAdvertisement();
-  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 5));
-  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 5, 0));
+  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 3));
+  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 3, 0));
   strategy.onState(state);
   assert.equal(sent.length, 3);
 });
@@ -75,8 +75,8 @@ test('examines all advertisements and preserves upkeep when choosing payment', (
   state.advertisements.items.unshift({ ...state.advertisements.items[0], advertisementId: 'irrelevant', selling: { items: [3] } });
   start();
   settleAdvertisement();
-  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 5));
-  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 5, 0));
+  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 3));
+  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 3, 0));
 });
 
 test('advertises balanced inventory and does not duplicate an open outgoing offer', () => {
@@ -116,8 +116,8 @@ test('offers to a newly encountered seller even without a matching seeking resou
     state.snapshotSequence += 1;
     strategy.onState(state);
     assert.equal(sent[2].offer.body.recipientId, 'P03');
-    assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 5));
-    assert.deepEqual(sent[2].offer.body.receive, bundle(0, 5, 0));
+    assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 3));
+    assert.deepEqual(sent[2].offer.body.receive, bundle(0, 3, 0));
   }
 });
 
@@ -128,8 +128,8 @@ test('offers for a lower resource when the absolute lowest is unavailable', () =
   state.advertisements.items[0].seeking.items = [];
   start();
   settleAdvertisement();
-  assert.deepEqual(sent[2].offer.body.give, bundle(5, 0, 0));
-  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 0, 5));
+  assert.deepEqual(sent[2].offer.body.give, bundle(3, 0, 0));
+  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 0, 3));
 });
 
 function incomingOffer(offerId, give, receive) {
@@ -186,7 +186,7 @@ test('uses the produced resource when safe surpluses are tied', () => {
   state.advertisements.items[0].selling.items = [2];
   start();
   settleAdvertisement();
-  assert.deepEqual(sent[2].offer.body.give, bundle(5, 0, 0));
+  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 3));
 });
 
 test('does not sell resources below reserve and refreshes near expiry', () => {
@@ -204,6 +204,33 @@ test('does not sell resources below reserve and refreshes near expiry', () => {
   refresh.start();
   assert.ok(refresh.sent[1].advertise);
   assert.equal(refresh.sent[1].advertise.body.expiresTick, 12);
+});
+
+test('trades only a quarter of safe surplus and respects the cap', () => {
+  const small = setup();
+  small.state.self.inventory = bundle(18, 15, 15);
+  small.start();
+  small.settleAdvertisement();
+  small.state.snapshotSequence += 1;
+  small.strategy.onState(small.state);
+  assert.equal(small.sent.some(message => message.offer), false);
+
+  const capped = setup();
+  capped.state.self.inventory = bundle(230, 15, 15);
+  capped.start();
+  capped.settleAdvertisement();
+  assert.equal(capped.sent[2].offer.body.give.water, 50);
+});
+
+test('rejects a trade that makes a non-specialty payment resource unsafe', () => {
+  const { state, sent, start } = setup();
+  state.self.inventory = bundle(10, 10, 30);
+  state.offers.items = [incomingOffer(
+    'mixed-payment', bundle(0, 10, 10), bundle(5, 5, 0),
+  )];
+  start();
+  assert.equal(sent[1].accept, undefined);
+  assert.ok(sent[1].advertise);
 });
 
 test('accepts a balancing offer when no offer supplies the absolute scarcest resource', () => {

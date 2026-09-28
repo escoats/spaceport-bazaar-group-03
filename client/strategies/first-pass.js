@@ -6,14 +6,20 @@ const DEFAULT_RESERVE_TICKS = 15;
 const ADVERTISEMENT_HORIZON_TICKS = 3;
 const ADVERTISEMENT_REFRESH_WINDOW = 2;
 const SIMILAR_SURPLUS_DELTA = 1;
+const MAX_TRADE_QUANTITY = 50;
+const TRADE_SURPLUS_FRACTION = 0.25;
 const emptyBundle = () => ({ water: 0, food: 0, components: 0 });
 const total = bundle => RESOURCES.reduce((sum, id) => sum + bundle[FIELD[id]], 0);
 const deficit = (bundle, reserve) => RESOURCES.reduce((sum, id) => {
   const field = FIELD[id];
   return sum + Math.max(0, reserve[field] - bundle[field]);
 }, 0);
-const sameItems = (left, right) => left.length === right.length
-  && left.every((item, index) => item === right[index]);
+const sameItems = (left, right) => {
+  const normalizedLeft = [...left].sort((a, b) => a - b);
+  const normalizedRight = [...right].sort((a, b) => a - b);
+  return normalizedLeft.length === normalizedRight.length
+    && normalizedLeft.every((item, index) => item === normalizedRight[index]);
+};
 
 function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESERVE_TICKS }) {
   let state;
@@ -38,11 +44,23 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
   function advertisementPlan(self, reserve) {
     const selling = [];
     const seeking = [];
+    let largestSurplus = 0;
+    let largestResource;
     for (const id of RESOURCES) {
       const field = FIELD[id];
-      const horizonBuffer = self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
-      if (self.inventory[field] >= reserve[field] + horizonBuffer) selling.push(id);
-      if (self.inventory[field] < reserve[field] + horizonBuffer) seeking.push(id);
+      const surplus = self.inventory[field] - reserve[field];
+      const horizon = self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
+      if (surplus > 0 && (surplus > largestSurplus
+        || (surplus === largestSurplus && id === self.specialty))) {
+        largestSurplus = surplus;
+        largestResource = id;
+      }
+      if (self.inventory[field] < reserve[field] + horizon) seeking.push(id);
+    }
+    if (largestResource !== undefined
+      && self.inventory[FIELD[largestResource]] >= reserve[FIELD[largestResource]]
+        + self.upkeepPerTick[FIELD[largestResource]] * ADVERTISEMENT_HORIZON_TICKS) {
+      selling.push(largestResource);
     }
     return { selling, seeking };
   }
@@ -53,21 +71,12 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
       && ad.status === 1 && ad.expiresTick > tick);
     const ttl = Math.min(12, state.rules.maxPublicationTtlTicks ?? 12);
     if (ttl < 1) return false;
-
-    if (!plan.selling.length && !plan.seeking.length) {
-      if (!active) return false;
-      const key = `withdraw:${active.advertisementId}`;
-      if (attempted.has(key)) return false;
-      command('withdraw', { objectId: active.advertisementId }, key);
-      return true;
-    }
-
+    if (!plan.selling.length && !plan.seeking.length) return false;
     const unchanged = active
       && sameItems(active.selling.items, plan.selling)
       && sameItems(active.seeking.items, plan.seeking)
       && active.expiresTick - tick > ADVERTISEMENT_REFRESH_WINDOW;
     if (unchanged) return false;
-
     const expiresTick = tick + ttl;
     const key = `advertise:${plan.selling.join(',')}:${plan.seeking.join(',')}:${expiresTick}`;
     if (attempted.has(key)) return false;
@@ -98,8 +107,6 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
       && !attempted.has(offer.offerId));
     if (gift) return command('accept', { offerId: gift.offerId }, gift.offerId);
 
-    // Offers do not reserve stock on the server. Keep only one outstanding
-    // paid trade so multiple acceptances cannot spend the same surplus.
     const inventory = self.inventory;
     const reserve = reserveFor(self);
     const currentDeficit = deficit(inventory, reserve);
@@ -107,21 +114,16 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
     const beneficial = incoming.filter(offer => {
       if (attempted.has(offer.offerId)) return false;
       const after = emptyBundle();
-      let paymentBelowReserve = false;
+      let nonSpecialtyPaymentBelowReserve = false;
       for (const id of RESOURCES) {
         const field = FIELD[id];
         if (offer.receive[field] > inventory[field]) return false;
         after[field] = inventory[field] - offer.receive[field] + offer.give[field];
-        if (offer.receive[field] > 0 && after[field] < reserve[field]) paymentBelowReserve = true;
+        if (offer.receive[field] > 0 && after[field] < reserve[field]
+          && field !== FIELD[self.specialty]) nonSpecialtyPaymentBelowReserve = true;
       }
       const improvesDeficit = deficit(after, reserve) < currentDeficit;
-      const paidProducedResource = RESOURCES.some(id => {
-        const field = FIELD[id];
-        return offer.receive[field] > 0 && field === FIELD[self.specialty]
-          && after[field] < reserve[field];
-      });
-      const remainsSafe = !paymentBelowReserve;
-      return improvesDeficit && (remainsSafe || paidProducedResource);
+      return improvesDeficit && !nonSpecialtyPaymentBelowReserve;
     });
     beneficial.sort((a, b) => {
       const aAfter = RESOURCES.reduce((bundle, id) => {
@@ -159,9 +161,16 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
           if (!RESOURCES.includes(give) || give === receive) continue;
           const key = `${ad.advertisementId}:${give}:${receive}`;
           if (attempted.has(key)) continue;
-          const surplus = inventory[FIELD[give]] - reserve[FIELD[give]];
-          const quantity = Math.min(5, Math.floor(surplus / 2),
-            inventory[FIELD[give]] - reserve[FIELD[give]]);
+          const ownAdvertisement = state.advertisements.items.find(ad => ad.stationId === self.stationId
+            && ad.status === 1 && ad.expiresTick > tick);
+          const advertised = ownAdvertisement?.selling.items.includes(give)
+            ? self.upkeepPerTick[FIELD[give]] * ADVERTISEMENT_HORIZON_TICKS : 0;
+          const protectedAmount = reserve[FIELD[give]] + advertised;
+          const surplus = inventory[FIELD[give]] - protectedAmount;
+          const quantity = Math.min(
+            MAX_TRADE_QUANTITY,
+            Math.max(0, Math.floor(surplus * TRADE_SURPLUS_FRACTION)),
+          );
           if (quantity <= 0) continue;
           candidates.push({ ad, give, receive, quantity, key, surplus });
         }
