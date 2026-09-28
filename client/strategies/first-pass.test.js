@@ -23,19 +23,34 @@ function setup() {
     strategy.onState(state);
     strategy.onReadiness({ runId: 'run', ready: true, snapshotSequence: 1 });
   };
-  return { strategy, state, sent, start };
+  const settleAdvertisement = () => {
+    const message = sent.at(-1);
+    assert.ok(message.advertise);
+    const body = message.advertise.body;
+    state.advertisements.items.push({
+      advertisementId: 'own-ad', stationId: 'P01', status: 1,
+      expiresTick: body.expiresTick, selling: body.selling, seeking: body.seeking,
+    });
+    strategy.onResult({ runId: 'run', requestId: message.advertise.requestId, ok: true });
+    state.snapshotSequence += 1;
+    strategy.onState(state);
+  };
+  return { strategy, state, sent, start, settleAdvertisement };
 }
 
 test('waits for readiness and pays from the largest safe surplus', () => {
-  const { strategy, state, sent } = setup();
+  const { strategy, state, sent, settleAdvertisement } = setup();
   strategy.onState(state);
   assert.equal(sent.length, 1);
   assert.equal(sent[0].ready.snapshotSequence, 1);
   strategy.onReadiness({ runId: 'run', ready: true, snapshotSequence: 1 });
-  assert.deepEqual(sent[1].offer.body.give, bundle(0, 0, 5));
-  assert.deepEqual(sent[1].offer.body.receive, bundle(0, 5, 0));
+  assert.deepEqual(sent[1].advertise.body.selling.items, [1, 3]);
+  assert.deepEqual(sent[1].advertise.body.seeking.items, [2]);
+  settleAdvertisement();
+  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 5));
+  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 5, 0));
   strategy.onState(state);
-  assert.equal(sent.length, 2);
+  assert.equal(sent.length, 3);
 });
 
 test('claims successive gifts before trading, waiting for updated inventory', () => {
@@ -55,23 +70,26 @@ test('claims successive gifts before trading, waiting for updated inventory', ()
 });
 
 test('examines all advertisements and preserves upkeep when choosing payment', () => {
-  const { state, sent, start } = setup();
+  const { state, sent, start, settleAdvertisement } = setup();
   state.self.upkeepPerTick.water = 20;
   state.advertisements.items.unshift({ ...state.advertisements.items[0], advertisementId: 'irrelevant', selling: { items: [3] } });
   start();
-  assert.deepEqual(sent[1].offer.body.give, bundle(0, 0, 5));
-  assert.deepEqual(sent[1].offer.body.receive, bundle(0, 5, 0));
+  settleAdvertisement();
+  assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 5));
+  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 5, 0));
 });
 
-test('does not trade balanced inventory or duplicate an open outgoing offer', () => {
+test('advertises balanced inventory and does not duplicate an open outgoing offer', () => {
   const balanced = setup();
   balanced.state.self.inventory = bundle(10, 10, 10);
   balanced.start();
-  assert.equal(balanced.sent.length, 1);
+  assert.equal(balanced.sent.length, 2);
+  assert.ok(balanced.sent[1].advertise);
   const outstanding = setup();
   outstanding.state.offers.items.push({ proposerId: 'P01', recipientId: 'P02', status: 1, expiresTick: 6 });
   outstanding.start();
-  assert.equal(outstanding.sent.length, 1);
+  assert.equal(outstanding.sent.length, 2);
+  assert.ok(outstanding.sent[1].advertise);
 });
 
 test('accepts affordable balancing trades and rejects unaffordable payment', () => {
@@ -81,35 +99,37 @@ test('accepts affordable balancing trades and rejects unaffordable payment', () 
     state.offers.items = [{ offerId: 'trade', proposerId: 'P02', recipientId: 'P01', status: 1, expiresTick: 6,
       give: bundle(0, cost, 0), receive: bundle(0, 0, cost) }];
     start();
-    assert.equal(sent.length, cost === 3 ? 2 : 1);
+    assert.equal(sent.length, 2);
     if (cost === 3) assert.equal(sent[1].accept.body.offerId, 'trade');
+    else assert.ok(sent[1].advertise);
   }
 });
 
 test('offers to a newly encountered seller even without a matching seeking resource', () => {
   for (const seeking of [[], [2]]) {
-    const { strategy, state, sent, start } = setup();
+    const { strategy, state, sent, start, settleAdvertisement } = setup();
     const ad = { ...state.advertisements.items[0], stationId: 'P03', seeking: { items: seeking } };
     state.advertisements.items = [];
     start();
-    assert.equal(sent.length, 1);
+    settleAdvertisement();
     state.advertisements.items = [ad];
     state.snapshotSequence += 1;
     strategy.onState(state);
-    assert.equal(sent[1].offer.body.recipientId, 'P03');
-    assert.deepEqual(sent[1].offer.body.give, bundle(0, 0, 5));
-    assert.deepEqual(sent[1].offer.body.receive, bundle(0, 5, 0));
+    assert.equal(sent[2].offer.body.recipientId, 'P03');
+    assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 5));
+    assert.deepEqual(sent[2].offer.body.receive, bundle(0, 5, 0));
   }
 });
 
 test('offers for a lower resource when the absolute lowest is unavailable', () => {
-  const { state, sent, start } = setup();
+  const { state, sent, start, settleAdvertisement } = setup();
   state.self.inventory = bundle(30, 2, 10);
   state.advertisements.items[0].selling.items = [3];
   state.advertisements.items[0].seeking.items = [];
   start();
-  assert.deepEqual(sent[1].offer.body.give, bundle(5, 0, 0));
-  assert.deepEqual(sent[1].offer.body.receive, bundle(0, 0, 5));
+  settleAdvertisement();
+  assert.deepEqual(sent[2].offer.body.give, bundle(5, 0, 0));
+  assert.deepEqual(sent[2].offer.body.receive, bundle(0, 0, 5));
 });
 
 function incomingOffer(offerId, give, receive) {
@@ -161,11 +181,29 @@ test('allows a produced resource below reserve when the net deficit improves', (
 });
 
 test('uses the produced resource when safe surpluses are tied', () => {
-  const { state, sent, start } = setup();
+  const { state, sent, start, settleAdvertisement } = setup();
   state.self.inventory = bundle(30, 20, 30);
   state.advertisements.items[0].selling.items = [2];
   start();
-  assert.deepEqual(sent[1].offer.body.give, bundle(5, 0, 0));
+  settleAdvertisement();
+  assert.deepEqual(sent[2].offer.body.give, bundle(5, 0, 0));
+});
+
+test('does not sell resources below reserve and refreshes near expiry', () => {
+  const { state, sent, start } = setup();
+  state.self.inventory = bundle(15, 15, 15);
+  start();
+  assert.deepEqual(sent[1].advertise.body.selling.items, []);
+  assert.deepEqual(sent[1].advertise.body.seeking.items, [1, 2, 3]);
+
+  const refresh = setup();
+  refresh.state.advertisements.items.push({
+    advertisementId: 'old-ad', stationId: 'P01', status: 1, expiresTick: 1,
+    selling: { items: [1] }, seeking: { items: [2] },
+  });
+  refresh.start();
+  assert.ok(refresh.sent[1].advertise);
+  assert.equal(refresh.sent[1].advertise.body.expiresTick, 12);
 });
 
 test('accepts a balancing offer when no offer supplies the absolute scarcest resource', () => {
@@ -195,6 +233,6 @@ test('connection handshake sends ready before the game starts and gates trading 
     assert.equal(sent.length, 1);
     handle({ message: 'readiness', readiness: { runId: 'run', ready: true, snapshotSequence: 1 } });
     assert.equal(sent.length, 2);
-    assert.ok(sent[1].offer);
+    assert.ok(sent[1].advertise);
   }
 });

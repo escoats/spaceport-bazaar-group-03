@@ -3,6 +3,8 @@ const { randomUUID } = require('node:crypto');
 const RESOURCES = [1, 2, 3];
 const FIELD = { 1: 'water', 2: 'food', 3: 'components' };
 const DEFAULT_RESERVE_TICKS = 15;
+const ADVERTISEMENT_HORIZON_TICKS = 3;
+const ADVERTISEMENT_REFRESH_WINDOW = 2;
 const SIMILAR_SURPLUS_DELTA = 1;
 const emptyBundle = () => ({ water: 0, food: 0, components: 0 });
 const total = bundle => RESOURCES.reduce((sum, id) => sum + bundle[FIELD[id]], 0);
@@ -10,6 +12,8 @@ const deficit = (bundle, reserve) => RESOURCES.reduce((sum, id) => {
   const field = FIELD[id];
   return sum + Math.max(0, reserve[field] - bundle[field]);
 }, 0);
+const sameItems = (left, right) => left.length === right.length
+  && left.every((item, index) => item === right[index]);
 
 function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESERVE_TICKS }) {
   let state;
@@ -22,6 +26,58 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
   const attempted = new Set();
 
   const envelope = () => ({ type: 1, protocolVersion: '2.0', runId: state.runId });
+
+  function reserveFor(self) {
+    return RESOURCES.reduce((bundle, id) => {
+      const field = FIELD[id];
+      bundle[field] = self.upkeepPerTick[field] * reserveTicks;
+      return bundle;
+    }, emptyBundle());
+  }
+
+  function advertisementPlan(self, reserve) {
+    const selling = [];
+    const seeking = [];
+    for (const id of RESOURCES) {
+      const field = FIELD[id];
+      const horizonBuffer = self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
+      if (self.inventory[field] >= reserve[field] + horizonBuffer) selling.push(id);
+      if (self.inventory[field] < reserve[field] + horizonBuffer) seeking.push(id);
+    }
+    return { selling, seeking };
+  }
+
+  function maybeAdvertise(self, tick, reserve) {
+    const plan = advertisementPlan(self, reserve);
+    const active = state.advertisements.items.find(ad => ad.stationId === self.stationId
+      && ad.status === 1 && ad.expiresTick > tick);
+    const ttl = Math.min(12, state.rules.maxPublicationTtlTicks ?? 12);
+    if (ttl < 1) return false;
+
+    if (!plan.selling.length && !plan.seeking.length) {
+      if (!active) return false;
+      const key = `withdraw:${active.advertisementId}`;
+      if (attempted.has(key)) return false;
+      command('withdraw', { objectId: active.advertisementId }, key);
+      return true;
+    }
+
+    const unchanged = active
+      && sameItems(active.selling.items, plan.selling)
+      && sameItems(active.seeking.items, plan.seeking)
+      && active.expiresTick - tick > ADVERTISEMENT_REFRESH_WINDOW;
+    if (unchanged) return false;
+
+    const expiresTick = tick + ttl;
+    const key = `advertise:${plan.selling.join(',')}:${plan.seeking.join(',')}:${expiresTick}`;
+    if (attempted.has(key)) return false;
+    command('advertise', {
+      selling: { items: plan.selling },
+      seeking: { items: plan.seeking },
+      expiresTick,
+    }, key);
+    return true;
+  }
 
   function command(kind, body, key) {
     attempted.add(key);
@@ -44,13 +100,8 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
 
     // Offers do not reserve stock on the server. Keep only one outstanding
     // paid trade so multiple acceptances cannot spend the same surplus.
-    if (open.some(offer => offer.proposerId === self.stationId)) return;
     const inventory = self.inventory;
-    const reserve = RESOURCES.reduce((bundle, id) => {
-      const field = FIELD[id];
-      bundle[field] = self.upkeepPerTick[field] * reserveTicks;
-      return bundle;
-    }, emptyBundle());
+    const reserve = reserveFor(self);
     const currentDeficit = deficit(inventory, reserve);
 
     const beneficial = incoming.filter(offer => {
@@ -92,6 +143,9 @@ function createFirstPassStrategy({ sendClientMessage, reserveTicks = DEFAULT_RES
       const offer = beneficial[0];
       return command('accept', { offerId: offer.offerId }, offer.offerId);
     }
+
+    if (maybeAdvertise(self, tick, reserve)) return;
+    if (open.some(offer => offer.proposerId === self.stationId)) return;
 
     // Inspect every active peer advertisement, then rank all useful matches.
     const candidates = [];
