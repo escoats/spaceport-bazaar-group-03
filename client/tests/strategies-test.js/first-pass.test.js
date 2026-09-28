@@ -1,20 +1,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { createFirstPassStrategy } = require('./first-pass');
-const { encodeClientMessage } = require('../encoding');
+const { bundle, createStrategyHarness } = require('../helpers/strategy-harness');
 
-const bundle = (water, food, components) => ({ water, food, components });
 function setup() {
-  const sent = [];
-  const strategy = createFirstPassStrategy({ sendClientMessage(message) {
-    encodeClientMessage(message);
-    sent.push(message);
-  } });
-  const state = {
-    runId: 'run', snapshotSequence: 1, tick: 0, phase: 2,
-    self: { stationId: 'P01', specialty: 1, inventory: bundle(20, 2, 30), upkeepPerTick: bundle(1, 1, 1) },
-    rules: { newCommandsPerStationPerTick: 10, maxOpenOutgoingOffers: 5, maxOfferTtlTicks: 6 },
-    offers: { items: [] },
+  return createStrategyHarness('first-pass', {
+    self: { inventory: bundle(20, 2, 30) },
     advertisements: { items: [
       { advertisementId: 'ad1', stationId: 'P02', status: 1, expiresTick: 6, selling: { items: [2] }, seeking: { items: [3, 1] } },
     ] },
@@ -242,7 +232,7 @@ test('accepts a balancing offer when no offer supplies the absolute scarcest res
 });
 
 test('connection handshake sends ready before the game starts and gates trading on acknowledgement', () => {
-  const { createIncomingMessageHandler } = require('../services/incoming-message-handlers');
+  const { createIncomingMessageHandler } = require('../../services/incoming-message-handlers');
   // Each new connection constructs a new strategy, including reconnects.
   for (let connection = 0; connection < 2; connection += 1) {
     const { strategy, state, sent } = setup();
