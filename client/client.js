@@ -73,7 +73,7 @@ socket.on('open', () => {
 
 socket.on('message', (data, isBinary) => {
   if (!isBinary) {
-    console.error('Expected a binary protobuf message');
+    logMessage('incoming', null, { data, isBinary, error: 'Expected a binary protobuf message' });
     return;
   }
 
@@ -81,11 +81,11 @@ socket.on('message', (data, isBinary) => {
   try {
     message = decodeServerMessage(data);
   } catch (error) {
-    console.error(`Failed to decode server message: ${error.message}`);
+    logMessage('incoming', null, { data, isBinary, error: `Failed to decode server message: ${error.message}` });
     return;
   }
 
-  logMessage('incoming', message);
+  logMessage('incoming', message, { data, isBinary });
 
   try {
     handleIncomingMessage(message);

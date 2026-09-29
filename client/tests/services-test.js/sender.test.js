@@ -10,7 +10,7 @@ const {
 
 test('does not send while the WebSocket is not open', () => {
 	const socket = createMockSocket({ readyState: WebSocket.CLOSED });
-	const sendMessage = createMessageSender(socket);
+	const sendMessage = createMessageSender(socket, () => {});
 
 	assert.throws(
 		() => sendMessage(clientMessages.ready),
@@ -21,7 +21,7 @@ test('does not send while the WebSocket is not open', () => {
 
 test('encodes and sends an outgoing message as binary', () => {
 	const socket = createMockSocket({ readyState: WebSocket.OPEN });
-	const sendMessage = createMessageSender(socket);
+	const sendMessage = createMessageSender(socket, () => {});
 
 	sendMessage(clientMessages.ready);
 
@@ -43,10 +43,22 @@ test('reports send errors from the WebSocket callback', () => {
 	console.error = (...args) => errors.push(args);
 
 	try {
-		createMessageSender(socket)(clientMessages.ready);
+		createMessageSender(socket, () => {})(clientMessages.ready);
 	} finally {
 		console.error = originalError;
 	}
 
 	assert.deepEqual(errors, [['Failed to send client message: socket failure']]);
+});
+
+test('logs the full outgoing attempt and encoded bytes before sending', () => {
+	const socket = createMockSocket({ readyState: WebSocket.OPEN });
+	const records = [];
+	createMessageSender(socket, (...args) => {
+		assert.equal(socket.sent.length, 0);
+		records.push(args);
+	})(clientMessages.ready);
+	assert.deepEqual(records, [['outgoing', clientMessages.ready, {
+		data: encodeClientMessage(clientMessages.ready),
+	}]]);
 });
