@@ -29,7 +29,7 @@ values for that process on the command line:
 ```sh
 BAZAAR_WS_URL="ws://<server-host>:<server-port>/ws" \
 BAZAAR_ACCESS_TOKEN="<access-token>" \
-npm start -- --strategy=first-pass
+npm start -- --strategy=<strategy-name>
 ```
 
 `BAZAAR_WS_URL` and `BAZAAR_ACCESS_TOKEN` override the values in `.env` for
