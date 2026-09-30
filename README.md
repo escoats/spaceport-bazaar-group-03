@@ -16,11 +16,24 @@ Run the client in a second terminal in the same container and connect it to
 ## Client configuration
 
 Start the client:
+
 ```sh
 cd client
 npm install
 npm start -- --strategy <strategy-name>
 ```
+
+To connect to a specific server with a token without changing `.env`, set the
+values for that process on the command line:
+
+```sh
+BAZAAR_WS_URL="ws://<server-host>:<server-port>/ws" \
+BAZAAR_ACCESS_TOKEN="<access-token>" \
+npm start -- --strategy=first-pass
+```
+
+`BAZAAR_WS_URL` and `BAZAAR_ACCESS_TOKEN` override the values in `.env` for
+that client only.
 
 ## Strategies
 
