@@ -1,9 +1,11 @@
 const { createProofOfConceptStrategy } = require('./proof-of-concept');
 
 const { createFirstPassStrategy } = require('./first-pass');
+const { createGenerousStrategy } = require('./generous');
 
 const strategies = new Map([
   ['first-pass', createFirstPassStrategy],
+  ['generous', createGenerousStrategy],
   ['proof-of-concept', createProofOfConceptStrategy],
 ]);
 
