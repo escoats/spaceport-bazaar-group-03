@@ -68,6 +68,9 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
       if (self.inventory[field] > target) selling.push(id);
       if (self.inventory[field] < target) seeking.push(id);
     }
+    // Keep the station's produced resource first when the market consumes
+    // listing order to resolve which item to show or match first.
+    selling.sort((a, b) => Number(b === self.specialty) - Number(a === self.specialty));
     return { selling, seeking };
   }
 
@@ -123,7 +126,8 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
    * they consume no inventory. Otherwise, simulate each affordable trade and
    * accept it when it increases stock of a resource currently below its seeking
    * target. Payment may bring another resource below reserve. Among qualifying
-   * trades, prefer the one requiring the least payment.
+   * trades, prefer gains in resources the station does not produce, then the
+   * offer requiring the least payment.
    */
   function acceptUsefulIncoming(incoming, self, reserve) {
     const { inventory } = self;
@@ -145,7 +149,16 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
         return inventory[field] < seekingTarget && after[field] > inventory[field];
       });
     });
-    useful.sort((a, b) => total(a.receive) - total(b.receive));
+    const nonProducedGain = offer => RESOURCES.reduce((sum, id) => {
+      const field = FIELD[id];
+      if (id === self.specialty) return sum;
+      const seekingTarget = reserve[field]
+        + self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
+      return sum + (inventory[field] < seekingTarget
+        ? Math.max(0, offer.give[field] - offer.receive[field]) : 0);
+    }, 0);
+    useful.sort((a, b) => nonProducedGain(b) - nonProducedGain(a)
+      || total(a.receive) - total(b.receive));
     return useful[0];
   }
 
