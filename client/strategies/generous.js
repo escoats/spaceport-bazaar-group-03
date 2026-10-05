@@ -60,10 +60,9 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
 
   /**
    * Build the station's public offer and request lists from its current stock.
-   * Anything strictly above its protected reserve is listed as for sale so
-   * peers can discover available resources. A resource is listed as wanted
-   * once stock falls below reserve plus three ticks of upkeep, giving peers
-   * time to respond before that resource reaches the survival reserve.
+   * Resources are listed as for sale only when stock is strictly above the
+   * protected reserve plus three ticks of upkeep. A resource is listed as
+   * wanted once stock falls below that same target.
    */
   function advertisementPlan(self, reserve) {
     const selling = [];
@@ -71,8 +70,9 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
     for (const id of RESOURCES) {
       const field = FIELD[id];
       const horizon = self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
-      if (self.inventory[field] > reserve[field]) selling.push(id);
-      if (self.inventory[field] < reserve[field] + horizon) seeking.push(id);
+      const target = reserve[field] + horizon;
+      if (self.inventory[field] > target) selling.push(id);
+      if (self.inventory[field] < target) seeking.push(id);
     }
     return { selling, seeking };
   }
