@@ -16,13 +16,37 @@ Run the client in a second terminal in the same container and connect it to
 ## Client configuration
 
 Start the client:
+
 ```sh
 cd client
 npm install
 npm start -- --strategy <strategy-name>
 ```
 
+To connect to a specific server with a token without changing `.env`, set the
+values for that process on the command line:
+
+```sh
+BAZAAR_WS_URL="ws://<server-host>:<server-port>/ws" \
+BAZAAR_ACCESS_TOKEN="<access-token>" \
+npm start -- --strategy=<strategy-name>
+```
+
+`BAZAAR_WS_URL` and `BAZAAR_ACCESS_TOKEN` override the values in `.env` for
+that client only.
+
 ## Strategies
 
 Strategies define the client's decision-making logic. To watch the example exchange from `artifacts/bazaar-protobuf-starter-linux/README.md` play out, run:
 `npm start -- --strategy=proof-of-concept`
+
+## Game logs
+
+The client prints one-line event summaries to the console and creates two paired
+log files per run in `client/logs/`:
+
+- `messages-<timestamp>-<unique-id>.jsonl`: full incoming and outgoing messages.
+- `messages-<timestamp>-<unique-id>-summary.log`: the same readable summaries as
+  the console, without color or bold escape codes.
+
+Both files are created when the first message is logged.
