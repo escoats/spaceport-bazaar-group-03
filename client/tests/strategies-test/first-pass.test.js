@@ -1,31 +1,15 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { bundle, createStrategyHarness } = require('../helpers/strategy-harness');
+const { advertisement, incomingOffer } = require('../helpers/strategy-fixtures');
 
 function setup() {
   return createStrategyHarness('first-pass', {
     self: { inventory: bundle(20, 2, 30) },
     advertisements: { items: [
-      { advertisementId: 'ad1', stationId: 'P02', status: 1, expiresTick: 6, selling: { items: [2] }, seeking: { items: [3, 1] } },
+      advertisement('ad1', [2], [3, 1]),
     ] },
-  };
-  const start = () => {
-    strategy.onState(state);
-    strategy.onReadiness({ runId: 'run', ready: true, snapshotSequence: 1 });
-  };
-  const settleAdvertisement = () => {
-    const message = sent.at(-1);
-    assert.ok(message.advertise);
-    const body = message.advertise.body;
-    state.advertisements.items.push({
-      advertisementId: 'own-ad', stationId: 'P01', status: 1,
-      expiresTick: body.expiresTick, selling: body.selling, seeking: body.seeking,
-    });
-    strategy.onResult({ runId: 'run', requestId: message.advertise.requestId, ok: true });
-    state.snapshotSequence += 1;
-    strategy.onState(state);
-  };
-  return { strategy, state, sent, start, settleAdvertisement };
+  });
 }
 
 test('waits for readiness and pays from the largest safe surplus', () => {
@@ -62,7 +46,7 @@ test('claims successive gifts before trading, waiting for updated inventory', ()
 test('examines all advertisements and preserves upkeep when choosing payment', () => {
   const { state, sent, start, settleAdvertisement } = setup();
   state.self.upkeepPerTick.water = 20;
-  state.advertisements.items.unshift({ ...state.advertisements.items[0], advertisementId: 'irrelevant', selling: { items: [3] } });
+  state.advertisements.items.unshift(advertisement('irrelevant', [3], state.advertisements.items[0].seeking.items));
   start();
   settleAdvertisement();
   assert.deepEqual(sent[2].offer.body.give, bundle(0, 0, 3));
@@ -121,10 +105,6 @@ test('offers for a lower resource when the absolute lowest is unavailable', () =
   assert.deepEqual(sent[2].offer.body.give, bundle(3, 0, 0));
   assert.deepEqual(sent[2].offer.body.receive, bundle(0, 0, 3));
 });
-
-function incomingOffer(offerId, give, receive) {
-  return { offerId, proposerId: 'P02', recipientId: 'P01', status: 1, expiresTick: 6, give, receive };
-}
 
 test('chooses the lowest unit price over arrival order and specialty payment', () => {
   const { state, sent, start } = setup();
@@ -187,10 +167,9 @@ test('does not sell resources below reserve and refreshes near expiry', () => {
   assert.deepEqual(sent[1].advertise.body.seeking.items, [1, 2, 3]);
 
   const refresh = setup();
-  refresh.state.advertisements.items.push({
-    advertisementId: 'old-ad', stationId: 'P01', status: 1, expiresTick: 1,
-    selling: { items: [1] }, seeking: { items: [2] },
-  });
+  refresh.state.advertisements.items.push(
+    advertisement('old-ad', [1], [2], { stationId: 'P01', expiresTick: 1 }),
+  );
   refresh.start();
   assert.ok(refresh.sent[1].advertise);
   assert.equal(refresh.sent[1].advertise.body.expiresTick, 12);
