@@ -4,7 +4,6 @@ const RESOURCES = [1, 2, 3];
 const FIELD = { 1: 'water', 2: 'food', 3: 'components' };
 const DEFAULT_RESERVE_TICKS = 15;
 const ADVERTISEMENT_HORIZON_TICKS = 3;
-const ADVERTISEMENT_REFRESH_WINDOW = 2;
 const GENEROUS_GIVE_QUANTITY = 2;
 const GENEROUS_RECEIVE_QUANTITY = 1;
 const OFFER_SAFETY_TICKS = 2;
@@ -79,7 +78,7 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
 
   /**
    * Publish the current plan if it differs from the station's active listing,
-   * or refresh it when its expiry is close. The method avoids empty listings,
+   * or when the listing has expired. The method avoids empty listings,
    * respects the market's publication TTL limit, and records the attempted
    * plan so repeated snapshots in one tick cannot send duplicate commands.
    * Returns true only when it sent an advertise command.
@@ -92,8 +91,7 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
     if (ttl < 1 || (!plan.selling.length && !plan.seeking.length)) return false;
     const unchanged = active
       && sameItems(active.selling.items, plan.selling)
-      && sameItems(active.seeking.items, plan.seeking)
-      && active.expiresTick - tick > ADVERTISEMENT_REFRESH_WINDOW;
+      && sameItems(active.seeking.items, plan.seeking);
     if (unchanged) return false;
     const expiresTick = tick + ttl;
     const key = `advertise:${plan.selling.join(',')}:${plan.seeking.join(',')}:${expiresTick}`;
