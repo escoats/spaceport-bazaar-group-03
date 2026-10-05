@@ -11,11 +11,6 @@ const OFFER_SAFETY_TICKS = 2;
 const emptyBundle = () => ({ water: 0, food: 0, components: 0 });
 /** Sum all resource quantities in a bundle, for example to detect free gifts. */
 const total = bundle => RESOURCES.reduce((sum, id) => sum + bundle[FIELD[id]], 0);
-/** Add the units missing below reserve across all resource types. */
-const deficit = (bundle, reserve) => RESOURCES.reduce((sum, id) => {
-  const field = FIELD[id];
-  return sum + Math.max(0, reserve[field] - bundle[field]);
-}, 0);
 /** Compare resource ID lists without depending on their ordering. */
 const sameItems = (left, right) => {
   const normalizedLeft = [...left].sort((a, b) => a - b);
@@ -126,15 +121,15 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
   /**
    * Choose an incoming offer worth accepting. Free gifts are preferred because
    * they consume no inventory. Otherwise, simulate each affordable trade and
-   * require it to improve the total shortage while leaving every resource at
-   * or above its reserve. Among qualifying trades, prefer the one requiring
-   * the least payment. Returns an offer or undefined if none is safe and useful.
+   * accept it when it increases stock of a resource currently below its seeking
+   * target. Payment may bring another resource below reserve. Among qualifying
+   * trades, prefer the one requiring the least payment.
    */
-  function acceptUsefulIncoming(incoming, inventory, reserve) {
+  function acceptUsefulIncoming(incoming, self, reserve) {
+    const { inventory } = self;
     const gift = incoming.find(offer => total(offer.receive) === 0 && total(offer.give) > 0
       && !attempted.has(offer.offerId));
     if (gift) return gift;
-    const currentDeficit = deficit(inventory, reserve);
     const useful = incoming.filter(offer => {
       if (attempted.has(offer.offerId)) return false;
       const after = emptyBundle();
@@ -142,9 +137,13 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
         const field = FIELD[id];
         if (offer.receive[field] > inventory[field]) return false;
         after[field] = inventory[field] - offer.receive[field] + offer.give[field];
-        if (after[field] < reserve[field]) return false;
       }
-      return deficit(after, reserve) < currentDeficit;
+      return RESOURCES.some(id => {
+        const field = FIELD[id];
+        const seekingTarget = reserve[field]
+          + self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
+        return inventory[field] < seekingTarget && after[field] > inventory[field];
+      });
     });
     useful.sort((a, b) => total(a.receive) - total(b.receive));
     return useful[0];
@@ -210,7 +209,7 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
     const open = state.offers.items.filter(offer => offer.status === 1 && offer.expiresTick > tick);
     const incoming = open.filter(offer => offer.recipientId === self.stationId);
     const reserve = reserveFor(self);
-    const useful = acceptUsefulIncoming(incoming, self.inventory, reserve);
+    const useful = acceptUsefulIncoming(incoming, self, reserve);
     if (useful) return command('accept', { offerId: useful.offerId }, useful.offerId);
     if (maybeAdvertise(self, tick, reserve)) return;
     makeGenerousOffer(self, tick, self.inventory, reserve, open);
