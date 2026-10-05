@@ -1,3 +1,4 @@
+const assert = require('node:assert/strict');
 const { encodeClientMessage } = require('../../encoding');
 const { getStrategyFactory } = require('../../strategies');
 
@@ -76,6 +77,26 @@ function createStrategyHarness(strategyName, stateOverrides = {}) {
 		start() {
 			deliverState();
 			acknowledgeReadiness();
+		},
+		settleAdvertisement() {
+			const message = sent.at(-1);
+			assert.ok(message.advertise);
+			const body = message.advertise.body;
+			state.advertisements.items.push({
+				advertisementId: 'own-ad',
+				stationId: state.self.stationId,
+				status: 1,
+				expiresTick: body.expiresTick,
+				selling: body.selling,
+				seeking: body.seeking,
+			});
+			strategy.onResult({
+				runId: state.runId,
+				requestId: message.advertise.requestId,
+				ok: true,
+			});
+			state.snapshotSequence += 1;
+			strategy.onState(state);
 		},
 	};
 }
