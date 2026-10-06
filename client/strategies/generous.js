@@ -122,20 +122,18 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
   }
 
   /**
-   * Choose an incoming offer worth accepting. Free gifts are preferred because
-   * they consume no inventory. Otherwise, simulate each affordable trade and
-   * accept it when it increases stock of a resource currently below its seeking
-   * target. Payment may bring another resource below reserve. Among qualifying
-   * trades, prefer gains in resources the station does not produce, then the
-   * offer requiring the least payment.
+   * Choose an incoming offer worth accepting. A free gift qualifies only when
+   * it supplies a resource below its seeking target. Otherwise, simulate each
+   * affordable trade and accept it when it increases stock of a resource below
+   * that target. Among qualifying trades, prefer gains in resources the station
+   * does not produce, then the offer requiring the least payment.
    */
   function acceptUsefulIncoming(incoming, self, reserve) {
     const { inventory } = self;
-    const gift = incoming.find(offer => total(offer.receive) === 0 && total(offer.give) > 0
-      && !attempted.has(offer.offerId));
-    if (gift) return gift;
     const useful = incoming.filter(offer => {
       if (attempted.has(offer.offerId)) return false;
+      const isGift = total(offer.receive) === 0;
+      if (isGift && total(offer.give) === 0) return false;
       const after = emptyBundle();
       for (const id of RESOURCES) {
         const field = FIELD[id];
@@ -160,6 +158,40 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
     useful.sort((a, b) => nonProducedGain(b) - nonProducedGain(a)
       || total(a.receive) - total(b.receive));
     return useful[0];
+  }
+
+  /**
+   * Give away specialty stock above the advertisement target once inventory
+   * exceeds twice that target. Prefer an active peer asking for the specialty.
+   */
+  function makeSpecialtyGift(self, tick, reserve, open) {
+    const specialty = self.specialty;
+    const field = FIELD[specialty];
+    const threshold = reserve[field]
+      + self.upkeepPerTick[field] * ADVERTISEMENT_HORIZON_TICKS;
+    if (self.inventory[field] <= 2 * threshold
+      || open.some(offer => offer.proposerId === self.stationId)
+      || state.rules.maxOpenOutgoingOffers < 1 || state.rules.maxOfferTtlTicks < 1) return false;
+
+    const peers = state.advertisements.items
+      .filter(ad => ad.stationId !== self.stationId && ad.status === 1 && ad.expiresTick > tick)
+      .sort((a, b) => Number(b.seeking.items.includes(specialty))
+        - Number(a.seeking.items.includes(specialty))
+        || a.stationId.localeCompare(b.stationId));
+    const recipient = peers[0];
+    if (!recipient) return false;
+
+    const key = `specialty-gift:${recipient.stationId}:${specialty}:${self.inventory[field] - threshold}`;
+    if (attempted.has(key)) return false;
+    const give = emptyBundle();
+    give[field] = self.inventory[field] - threshold;
+    command('offer', {
+      recipientId: recipient.stationId,
+      give,
+      receive: emptyBundle(),
+      expiresTick: tick + Math.min(2, state.rules.maxOfferTtlTicks),
+    }, key);
+    return true;
   }
 
   /**
@@ -225,6 +257,7 @@ function createGenerousStrategy({ sendClientMessage, reserveTicks = DEFAULT_RESE
     const useful = acceptUsefulIncoming(incoming, self, reserve);
     if (useful) return command('accept', { offerId: useful.offerId }, useful.offerId);
     if (maybeAdvertise(self, tick, reserve)) return;
+    if (makeSpecialtyGift(self, tick, reserve, open)) return;
     makeGenerousOffer(self, tick, self.inventory, reserve, open);
   }
 
