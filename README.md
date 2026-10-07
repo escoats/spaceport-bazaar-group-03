@@ -35,6 +35,17 @@ npm start -- --strategy=<strategy-name>
 `BAZAAR_WS_URL` and `BAZAAR_ACCESS_TOKEN` override the values in `.env` for
 that client only.
 
+To start multiple clients with the same policy on a test server, use the launcher
+and provide the desired client count:
+
+```sh
+npm run start:many -- --count 9 --strategy=<strategy-name>
+```
+
+The count defaults to 3. Press `Ctrl-C` to stop all
+clients started by the launcher together.
+This launcher uses the same credentials in .env for all clients, so it won't work for a production-level server that enforces authentication.
+
 ## Strategies
 
 Strategies define the client's decision-making logic. To watch the example exchange from `artifacts/bazaar-protobuf-starter-linux/README.md` play out, run:
