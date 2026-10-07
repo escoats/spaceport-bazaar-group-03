@@ -5,6 +5,7 @@
   "description": "Basic P01 WebSocket client for the Bazaar protobuf exercise",
   "scripts": {
     "start": "node client.js",
+    "start:many": "node start-clients.js",
     "test": "node --test"
   },
   "dependencies": {
